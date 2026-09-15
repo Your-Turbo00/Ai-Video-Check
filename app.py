@@ -296,5 +296,4 @@ def analyze_video(video_path):
 top_left, top_right = st.columns([5, 1])
 
 with top_left:
-    st.markdown(
-        "<h1 style='font-size:42px; margin-bottom:0
+    st.title("AI Video Check")
