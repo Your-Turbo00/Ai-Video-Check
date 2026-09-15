@@ -303,7 +303,13 @@ else:
 
     col1, col2 = st.columns(2)
 
-    with col1:
-        st.metric("Duration", f'{result["duration"]:.2f} seconds')
-        st.metric(
-            "Resolution",
+with col1:
+    st.metric("Duration", f'{result["duration"]:.2f} seconds')
+    st.metric("Resolution", f'{result["width"]} × {result["height"]}')
+    st.metric("Frames Analyzed", result["frames"])
+
+with col2:
+    st.metric("Frame Rate", f'{result["fps"]:.2f} FPS')
+    st.metric("Average Sharpness", f'{result["sharpness"]:.1f}')
+    st.metric("Repeated Frame Ratio", f'{result["repeated"] * 100:.1f}%')
+       
