@@ -1,425 +1,200 @@
 import streamlit as st
-import time
 import cv2
 import tempfile
 import os
 import numpy as np
-
-# =========================================================
-# PAGE CONFIGURATION
-# =========================================================
+import time
 
 st.set_page_config(
     page_title="AI Video Check",
-    page_icon="🎥",
-    layout="centered",
-    initial_sidebar_state="collapsed"
+    layout="centered"
 )
-
-# =========================================================
-# SESSION STATE
-# =========================================================
 
 if "theme" not in st.session_state:
     st.session_state.theme = "dark"
 
-if "show_results" not in st.session_state:
-    st.session_state.show_results = False
+if "results" not in st.session_state:
+    st.session_state.results = None
 
-if "analysis_result" not in st.session_state:
-    st.session_state.analysis_result = None
+dark = st.session_state.theme == "dark"
 
-# =========================================================
-# COLORS / THEME
-# =========================================================
-
-if st.session_state.theme == "dark":
-    background = "#0d0f14"
-    text = "#f1f1f1"
-    secondary = "#a8abb4"
-    card = "#191c24"
-    border = "#30343f"
-    input_bg = "#151820"
-else:
-    background = "#f5f6f8"
-    text = "#17191f"
-    secondary = "#60636c"
-    card = "#ffffff"
-    border = "#d9dce3"
-    input_bg = "#ffffff"
-
-# =========================================================
-# CSS
-# =========================================================
+background = "#0d0f14" if dark else "#f5f6f8"
+text = "#f1f1f1" if dark else "#17191f"
+card = "#191c24" if dark else "#ffffff"
+border = "#30343f" if dark else "#d9dce3"
+secondary = "#a8abb4" if dark else "#60636c"
 
 st.markdown(
     f"""
-<style>
-.stApp {{
-    background-color: {background};
-    color: {text};
-}}
-
-.main .block-container {{
-    max-width: 850px;
-    padding-top: 3rem;
-    padding-bottom: 3rem;
-}}
-
-h1, h2, h3, h4, p, label {{
-    color: {text} !important;
-}}
-
-.subtitle {{
-    color: {secondary};
-    font-size: 17px;
-    margin-top: -12px;
-    margin-bottom: 35px;
-}}
-
-.section-title {{
-    color: {text};
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 10px;
-}}
-
-.result-card {{
-    background-color: {card};
-    border: 1px solid {border};
-    border-radius: 14px;
-    padding: 30px;
-    margin-top: 25px;
-}}
-
-.completed {{
-    font-size: 30px;
-    font-weight: 700;
-    text-align: center;
-    margin-top: 35px;
-    margin-bottom: 20px;
-    color: {text};
-}}
-
-.stTextInput input {{
-    background-color: {input_bg} !important;
-    color: {text} !important;
-    border: 1px solid {border} !important;
-}}
-
-.stTextInput input::placeholder {{
-    color: {secondary} !important;
-}}
-
-div[data-testid="stFileUploader"] {{
-    background-color: {card};
-    border-radius: 12px;
-    padding: 8px;
-}}
-
-.footer {{
-    color: {secondary};
-    text-align: center;
-    font-size: 13px;
-    margin-top: 60px;
-    padding-top: 20px;
-    border-top: 1px solid {border};
-}}
-</style>
-""",
+    <style>
+    .stApp {{
+        background-color: {background};
+        color: {text};
+    }}
+    h1, h2, h3, p, label {{
+        color: {text} !important;
+    }}
+    .subtitle {{
+        color: {secondary};
+        font-size: 17px;
+        margin-bottom: 30px;
+    }}
+    .card {{
+        background-color: {card};
+        border: 1px solid {border};
+        border-radius: 14px;
+        padding: 25px;
+        margin-top: 20px;
+    }}
+    </style>
+    """,
     unsafe_allow_html=True
 )
 
-# =========================================================
-# VIDEO ANALYSIS FUNCTION
-# =========================================================
+header_left, header_right = st.columns([5, 1])
 
-def analyze_video(video_path):
-    cap = cv2.VideoCapture(video_path)
+with header_left:
+    st.title("AI Video Check")
 
-    if not cap.isOpened():
-        return {
-            "success": False,
-            "message": "The video could not be opened or decoded."
-        }
+with header_right:
+    if st.button("☀️" if dark else "🌙"):
+        st.session_state.theme = "light" if dark else "dark"
+        st.rerun()
 
-    fps = float(cap.get(cv2.CAP_PROP_FPS))
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+st.markdown(
+    '<div class="subtitle">Check whether a video may contain AI-generated or manipulated content.</div>',
+    unsafe_allow_html=True
+)
+
+
+def analyze_video(path):
+    capture = cv2.VideoCapture(path)
+
+    if not capture.isOpened():
+        return None, "The video could not be opened."
+
+    fps = float(capture.get(cv2.CAP_PROP_FPS))
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     if fps <= 0:
         fps = 0.0
 
-    duration = frame_count / fps if fps > 0 else 0.0
+    duration = total_frames / fps if fps > 0 else 0.0
 
-    if frame_count <= 0:
-        cap.release()
-        return {
-            "success": False,
-            "message": "No readable frames were found in this video."
-        }
+    if total_frames <= 0:
+        capture.release()
+        return None, "No readable frames were found."
 
-    sample_count = min(16, frame_count)
+    sample_count = min(12, total_frames)
 
-    sample_indices = np.linspace(
+    indices = np.linspace(
         0,
-        frame_count - 1,
+        total_frames - 1,
         sample_count,
         dtype=int
     )
 
     frames = []
-    sharpness_values = []
-    brightness_values = []
+    sharpness = []
 
-    for frame_index in sample_indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_index))
-        success, frame = cap.read()
+    for index in indices:
+        capture.set(cv2.CAP_PROP_POS_FRAMES, int(index))
+        success, frame = capture.read()
 
         if not success or frame is None:
             continue
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        resized = cv2.resize(gray, (64, 64))
 
-        small_gray = cv2.resize(gray, (64, 64))
+        frames.append(resized)
 
-        sharpness = float(
-            cv2.Laplacian(gray, cv2.CV_64F).var()
-        )
+        value = cv2.Laplacian(
+            gray,
+            cv2.CV_64F
+        ).var()
 
-        brightness = float(np.mean(gray))
+        sharpness.append(float(value))
 
-        frames.append(small_gray)
-        sharpness_values.append(sharpness)
-        brightness_values.append(brightness)
-
-    cap.release()
+    capture.release()
 
     if len(frames) < 2:
-        return {
-            "success": False,
-            "message": "The video did not contain enough readable frames."
-        }
+        return None, "Not enough readable frames were found."
 
     differences = []
 
-    for index in range(1, len(frames)):
-        difference = float(
-            np.mean(
-                cv2.absdiff(
-                    frames[index - 1],
-                    frames[index]
-                )
+    for i in range(1, len(frames)):
+        difference = np.mean(
+            cv2.absdiff(
+                frames[i - 1],
+                frames[i]
             )
         )
-
-        differences.append(difference)
+        differences.append(float(difference))
 
     average_difference = float(np.mean(differences))
-    average_sharpness = float(np.mean(sharpness_values))
+    average_sharpness = float(np.mean(sharpness))
 
-    duplicate_threshold = 1.5
-
-    duplicate_count = sum(
-        1 for value in differences
-        if value < duplicate_threshold
+    repeated = sum(
+        value < 1.5
+        for value in differences
     )
 
-    duplicate_ratio = duplicate_count / max(1, len(differences))
+    repeated_ratio = repeated / max(1, len(differences))
 
     observations = []
 
     if width < 360 or height < 240:
-        observations.append("Low-resolution video")
+        observations.append("Low video resolution")
 
     if fps > 0 and fps < 15:
         observations.append("Low frame rate")
 
     if average_sharpness < 20:
-        observations.append("Frames appear soft or blurry")
+        observations.append("Frames appear blurry")
 
-    if duplicate_ratio > 0.45:
+    if repeated_ratio > 0.45:
         observations.append("Many sampled frames are visually similar")
 
     if average_difference < 2.5:
-        observations.append("Very little visual movement was detected")
+        observations.append("Very little visual movement detected")
 
     if not observations:
         observations.append("No major technical irregularities detected")
 
-    if duplicate_ratio > 0.65:
+    if repeated_ratio > 0.65:
         assessment = "TECHNICALLY UNUSUAL"
-        explanation = (
-            "The sampled video contains a high amount of repeated "
-            "visual content. This can occur because of editing, "
-            "still-image animation, screen recording, or processing."
-        )
+        explanation = "A high amount of repeated visual content was detected."
 
     elif average_difference < 1.5:
         assessment = "LIMITED VISUAL EVIDENCE"
-        explanation = (
-            "The sampled frames show very little visual change. "
-            "The system cannot make a meaningful authenticity assessment."
-        )
+        explanation = "The video showed very little visual change."
 
     else:
         assessment = "NO OBVIOUS TECHNICAL ANOMALY"
-        explanation = (
-            "The video showed readable frames and normal visual "
-            "variation. This does not prove that the video is authentic."
-        )
+        explanation = "The video showed readable frames and normal visual variation."
 
-    return {
-        "success": True,
+    result = {
         "assessment": assessment,
         "explanation": explanation,
         "duration": duration,
         "fps": fps,
-        "frame_count": frame_count,
         "width": width,
         "height": height,
-        "frames_analyzed": len(frames),
+        "frames": len(frames),
         "sharpness": average_sharpness,
-        "duplicate_ratio": duplicate_ratio,
+        "repeated": repeated_ratio,
         "observations": observations
     }
 
-# =========================================================
-# TOP HEADER
-# =========================================================
+    return result, None
 
-top_left, top_right = st.columns([5, 1])
 
-with top_left:
-    st.markdown(
-        "<h1 style='font-size:42px; margin-bottom:0;'>AI Video Check</h1>",
-        unsafe_allow_html=True
-    )
+if st.session_state.results is None:
 
-with top_right:
-    st.write("")
-
-    theme_button = "☀️" if st.session_state.theme == "dark" else "🌙"
-
-    if st.button(theme_button, help="Toggle dark/light mode"):
-        if st.session_state.theme == "dark":
-            st.session_state.theme = "light"
-        else:
-            st.session_state.theme = "dark"
-
-        st.rerun()
-
-st.markdown(
-    "<div class='subtitle'>Check whether a video may contain AI-generated or manipulated content.</div>",
-    unsafe_allow_html=True
-)
-
-# =========================================================
-# RESULTS PAGE
-# =========================================================
-
-if st.session_state.show_results:
-
-    result = st.session_state.analysis_result
-
-    st.markdown(
-        "<div class='completed'>ANALYSIS COMPLETED</div>",
-        unsafe_allow_html=True
-    )
-
-    if result is None or not result.get("success", False):
-
-        error_message = "Analysis failed."
-
-        if result is not None:
-            error_message = result.get(
-                "message",
-                "Analysis failed."
-            )
-
-        st.error(error_message)
-
-    else:
-
-        st.markdown(
-            f"""
-<div class='result-card'>
-    <h2 style='text-align:center;'>Analysis Results</h2>
-    <h3 style='text-align:center; margin-top:20px;'>
-        {result["assessment"]}
-    </h3>
-    <p style='text-align:center; color:{secondary};'>
-        {result["explanation"]}
-    </p>
-</div>
-""",
-            unsafe_allow_html=True
-        )
-
-        st.subheader("Technical Summary")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.metric(
-                "Video Duration",
-                f"{result['duration']:.2f} seconds"
-            )
-
-            st.metric(
-                "Resolution",
-                f"{result['width']} × {result['height']}"
-            )
-
-            st.metric(
-                "Frames Analyzed",
-                result["frames_analyzed"]
-            )
-
-        with col2:
-            st.metric(
-                "Frame Rate",
-                f"{result['fps']:.2f} FPS"
-            )
-
-            st.metric(
-                "Average Sharpness",
-                f"{result['sharpness']:.1f}"
-            )
-
-            st.metric(
-                "Repeated Frame Ratio",
-                f"{result['duplicate_ratio'] * 100:.1f}%"
-            )
-
-        st.subheader("Observations")
-
-        for observation in result["observations"]:
-            st.write("• " + observation)
-
-        st.info(
-            "This is a technical screening tool, not definitive proof "
-            "of whether a video is authentic or AI-generated."
-        )
-
-    st.write("")
-
-    if st.button("✕ Close Results", use_container_width=True):
-        st.session_state.show_results = False
-        st.session_state.analysis_result = None
-        st.rerun()
-
-# =========================================================
-# MAIN PAGE
-# =========================================================
-
-else:
-
-    st.markdown(
-        "<div class='section-title'>Paste video link</div>",
-        unsafe_allow_html=True
-    )
+    st.subheader("Paste video link")
 
     video_link = st.text_input(
         "Video URL",
@@ -428,55 +203,107 @@ else:
     )
 
     st.markdown(
-        "<div style='text-align:center; color:#888; margin:22px 0;'>OR</div>",
+        '<p style="text-align:center;">OR</p>',
         unsafe_allow_html=True
     )
 
-    st.markdown(
-        "<div class='section-title'>Upload video</div>",
-        unsafe_allow_html=True
-    )
+    st.subheader("Upload video")
 
-    uploaded_file = st.file_uploader(
+    uploaded = st.file_uploader(
         "Choose a video file",
-        type=[
-            "mp4",
-            "mov",
-            "avi",
-            "mkv",
-            "webm"
-        ],
+        type=["mp4", "mov", "avi", "mkv", "webm"],
         label_visibility="collapsed"
     )
 
-    st.write("")
-
     analyze_button = st.button(
         "Analyze Video",
-        use_container_width=True,
-        type="primary"
+        type="primary",
+        use_container_width=True
     )
 
     if analyze_button:
 
-        if uploaded_file is None:
+        if uploaded is None:
 
             if video_link:
                 st.warning(
-                    "Video-link analysis is not enabled yet. "
-                    "Please upload the video file directly."
+                    "Link analysis is not enabled yet. Please upload the video file."
                 )
             else:
-                st.error(
-                    "Please upload a video file first."
-                )
+                st.error("Please upload a video file first.")
 
         else:
 
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+            progress = st.progress(0)
+            status = st.empty()
 
-            stages = [
-                (10, "Preparing video..."),
-                (25, "Loading video data..."),
-                (
+            messages = [
+                (15, "Preparing video..."),
+                (35, "Reading video data..."),
+                (55, "Extracting frames..."),
+                (75, "Checking frame consistency..."),
+                (90, "Preparing report..."),
+                (100, "Analysis complete.")
+            ]
+
+            for percentage, message in messages:
+                time.sleep(0.2)
+                progress.progress(percentage)
+                status.write(f"{message} {percentage}%")
+
+            extension = os.path.splitext(uploaded.name)[1]
+            temporary_path = None
+
+            try:
+
+                with tempfile.NamedTemporaryFile(
+                    delete=False,
+                    suffix=extension
+                ) as temporary_file:
+
+                    temporary_file.write(uploaded.getbuffer())
+                    temporary_path = temporary_file.name
+
+                result, error = analyze_video(temporary_path)
+
+                if error:
+                    st.error(error)
+                else:
+                    st.session_state.results = result
+                    st.rerun()
+
+            except Exception as error:
+                st.error("Analysis failed: " + str(error))
+
+            finally:
+
+                if (
+                    temporary_path is not None
+                    and os.path.exists(temporary_path)
+                ):
+                    os.remove(temporary_path)
+
+else:
+
+    result = st.session_state.results
+
+    st.success("ANALYSIS COMPLETED")
+
+    st.markdown(
+        f"""
+        <div class="card">
+        <h2>{result["assessment"]}</h2>
+        <p>{result["explanation"]}</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.subheader("Technical Summary")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Duration", f'{result["duration"]:.2f} seconds')
+        st.metric(
+            "Resolution",
